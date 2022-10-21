@@ -44,7 +44,7 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
     private $excluded;
 
     /** @var string[]|null */
-    private static $cachedSqlStatements = null;
+    private $cachedSqlStatements = null;
 
     /**
      * Construct new purger instance.
@@ -101,8 +101,8 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
     {
         $connection = $this->em->getConnection();
 
-        if (self::$cachedSqlStatements === null) {
-            self::$cachedSqlStatements = [];
+        if ($this->cachedSqlStatements === null) {
+            $this->cachedSqlStatements = [];
             $classes                   = [];
 
             foreach ($this->em->getMetadataFactory()->getAllMetadata() as $metadata) {
@@ -165,14 +165,14 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
                 }
 
                 if ($this->purgeMode === self::PURGE_MODE_DELETE) {
-                    self::$cachedSqlStatements[] = $this->getDeleteFromTableSQL($tbl, $platform);
+                    $this->cachedSqlStatements[] = $this->getDeleteFromTableSQL($tbl, $platform);
                 } else {
-                    self::$cachedSqlStatements[] = $platform->getTruncateTableSQL($tbl, true);
+                    $this->cachedSqlStatements[] = $platform->getTruncateTableSQL($tbl, true);
                 }
             }
         }
 
-        array_map([$connection, 'executeStatement'], self::$cachedSqlStatements);
+        array_map([$connection, 'executeStatement'], $this->cachedSqlStatements);
     }
 
     /**
