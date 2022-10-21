@@ -105,7 +105,6 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
         array_map([$connection, 'executeStatement'], $this->getPurgeStatements());
     }
 
-    /** @return list<string> */
     private function getPurgeStatements(): array
     {
         if ($this->cachedSqlStatements !== null) {
