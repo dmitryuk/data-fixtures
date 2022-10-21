@@ -69,6 +69,7 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
     public function setPurgeMode($mode)
     {
         $this->purgeMode = $mode;
+        $this->invalidateCache();
     }
 
     /**
@@ -85,6 +86,7 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
     public function setEntityManager(EntityManagerInterface $em)
     {
         $this->em = $em;
+        $this->invalidateCache();
     }
 
     /**
@@ -189,6 +191,11 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
         }
 
         return $statements;
+    }
+
+    private function invalidateCache(): void
+    {
+        $this->cachedSqlStatements = null;
     }
 
     /**
