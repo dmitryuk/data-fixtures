@@ -10,11 +10,11 @@ use Doctrine\DBAL\Schema\Identifier;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Mapping\ClassMetadata;
 
+use function array_map;
 use function array_reverse;
-use function array_search;
 use function assert;
 use function count;
-use function is_callable;
+use function in_array;
 use function method_exists;
 use function preg_match;
 
@@ -42,6 +42,9 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
      * @var string[]
      */
     private $excluded;
+
+    /** @var string[]|null */
+    private static $cachedSqlStatements = null;
 
     /**
      * Construct new purger instance.
@@ -96,73 +99,80 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
     /** @inheritDoc */
     public function purge()
     {
-        $classes = [];
+        $connection = $this->em->getConnection();
 
-        foreach ($this->em->getMetadataFactory()->getAllMetadata() as $metadata) {
-            if ($metadata->isMappedSuperclass || (isset($metadata->isEmbeddedClass) && $metadata->isEmbeddedClass)) {
-                continue;
+        if (self::$cachedSqlStatements === null) {
+            self::$cachedSqlStatements = [];
+            $classes                   = [];
+
+            foreach ($this->em->getMetadataFactory()->getAllMetadata() as $metadata) {
+                if ($metadata->isMappedSuperclass || (isset($metadata->isEmbeddedClass) && $metadata->isEmbeddedClass)) {
+                    continue;
+                }
+
+                $classes[] = $metadata;
             }
 
-            $classes[] = $metadata;
+            $commitOrder = $this->getCommitOrder($this->em, $classes);
+
+            // Get platform parameters
+            $platform = $this->em->getConnection()->getDatabasePlatform();
+
+            // Drop association tables first
+            $orderedTables = $this->getAssociationTables($commitOrder, $platform);
+
+            // Drop tables in reverse commit order
+            for ($i = count($commitOrder) - 1; $i >= 0; --$i) {
+                $class = $commitOrder[$i];
+
+                if (
+                    (isset($class->isEmbeddedClass) && $class->isEmbeddedClass) ||
+                    $class->isMappedSuperclass ||
+                    ($class->isInheritanceTypeSingleTable() && $class->name !== $class->rootEntityName)
+                ) {
+                    continue;
+                }
+
+                $orderedTables[] = $this->getTableName($class, $platform);
+            }
+
+            $connectionConfiguration = $connection->getConfiguration();
+
+            $filterExpr = method_exists(
+                $connectionConfiguration,
+                'getFilterSchemaAssetsExpression'
+            ) ? $connectionConfiguration->getFilterSchemaAssetsExpression() : null;
+
+            $schemaAssetsFilter = method_exists(
+                $connectionConfiguration,
+                'getSchemaAssetsFilter'
+            ) ? $connectionConfiguration->getSchemaAssetsFilter() : null;
+
+            foreach ($orderedTables as $tbl) {
+                // If we have a filter expression, check it and skip if necessary
+                if (! empty($filterExpr) && ! preg_match($filterExpr, $tbl)) {
+                    continue;
+                }
+
+                // If the table is excluded, skip it as well
+                if (in_array($tbl, $this->excluded)) {
+                    continue;
+                }
+
+                // Support schema asset filters as presented in
+                if ($schemaAssetsFilter !== null && ! $schemaAssetsFilter($tbl)) {
+                    continue;
+                }
+
+                if ($this->purgeMode === self::PURGE_MODE_DELETE) {
+                    self::$cachedSqlStatements[] = $this->getDeleteFromTableSQL($tbl, $platform);
+                } else {
+                    self::$cachedSqlStatements[] = $platform->getTruncateTableSQL($tbl, true);
+                }
+            }
         }
 
-        $commitOrder = $this->getCommitOrder($this->em, $classes);
-
-        // Get platform parameters
-        $platform = $this->em->getConnection()->getDatabasePlatform();
-
-        // Drop association tables first
-        $orderedTables = $this->getAssociationTables($commitOrder, $platform);
-
-        // Drop tables in reverse commit order
-        for ($i = count($commitOrder) - 1; $i >= 0; --$i) {
-            $class = $commitOrder[$i];
-
-            if (
-                (isset($class->isEmbeddedClass) && $class->isEmbeddedClass) ||
-                $class->isMappedSuperclass ||
-                ($class->isInheritanceTypeSingleTable() && $class->name !== $class->rootEntityName)
-            ) {
-                continue;
-            }
-
-            $orderedTables[] = $this->getTableName($class, $platform);
-        }
-
-        $connection            = $this->em->getConnection();
-        $filterExpr            = method_exists(
-            $connection->getConfiguration(),
-            'getFilterSchemaAssetsExpression'
-        ) ? $connection->getConfiguration()->getFilterSchemaAssetsExpression() : null;
-        $emptyFilterExpression = empty($filterExpr);
-
-        $schemaAssetsFilter = method_exists(
-            $connection->getConfiguration(),
-            'getSchemaAssetsFilter'
-        ) ? $connection->getConfiguration()->getSchemaAssetsFilter() : null;
-
-        foreach ($orderedTables as $tbl) {
-            // If we have a filter expression, check it and skip if necessary
-            if (! $emptyFilterExpression && ! preg_match($filterExpr, $tbl)) {
-                continue;
-            }
-
-            // If the table is excluded, skip it as well
-            if (array_search($tbl, $this->excluded) !== false) {
-                continue;
-            }
-
-            // Support schema asset filters as presented in
-            if (is_callable($schemaAssetsFilter) && ! $schemaAssetsFilter($tbl)) {
-                continue;
-            }
-
-            if ($this->purgeMode === self::PURGE_MODE_DELETE) {
-                $connection->executeStatement($this->getDeleteFromTableSQL($tbl, $platform));
-            } else {
-                $connection->executeStatement($platform->getTruncateTableSQL($tbl, true));
-            }
-        }
+        array_map([$connection, 'executeStatement'], self::$cachedSqlStatements);
     }
 
     /**
