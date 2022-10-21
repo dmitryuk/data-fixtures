@@ -120,8 +120,7 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
     {
         $connection = $this->em->getConnection();
 
-        $this->cachedSqlStatements = [];
-        $classes                   = [];
+        $classes = [];
 
         foreach ($this->em->getMetadataFactory()->getAllMetadata() as $metadata) {
             if ($metadata->isMappedSuperclass || (isset($metadata->isEmbeddedClass) && $metadata->isEmbeddedClass)) {
