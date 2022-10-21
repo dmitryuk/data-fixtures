@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Doctrine\Common\DataFixtures\Purger;
 
 use Doctrine\Common\DataFixtures\Sorter\TopologicalSorter;
-use Doctrine\DBAL\Exception;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Schema\Identifier;
 use Doctrine\ORM\EntityManagerInterface;
@@ -68,8 +67,8 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
      */
     public function setPurgeMode($mode)
     {
-        $this->purgeMode = $mode;
-        $this->invalidateCache();
+        $this->purgeMode           = $mode;
+        $this->cachedSqlStatements = null;
     }
 
     /**
@@ -85,8 +84,8 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
     /** @inheritDoc */
     public function setEntityManager(EntityManagerInterface $em)
     {
-        $this->em = $em;
-        $this->invalidateCache();
+        $this->em                  = $em;
+        $this->cachedSqlStatements = null;
     }
 
     /**
@@ -103,24 +102,18 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
     public function purge()
     {
         $connection = $this->em->getConnection();
-
-        if ($this->cachedSqlStatements === null) {
-            $this->cachedSqlStatements = $this->getPurgeStatements();
-        }
-
-        array_map([$connection, 'executeStatement'], $this->cachedSqlStatements);
+        array_map([$connection, 'executeStatement'], $this->getPurgeStatements());
     }
 
-    /**
-     * @return list<string>
-     *
-     * @throws Exception
-     */
+    /** @return list<string> */
     private function getPurgeStatements(): array
     {
-        $connection = $this->em->getConnection();
+        if ($this->cachedSqlStatements !== null) {
+            return $this->cachedSqlStatements;
+        }
 
-        $classes = [];
+        $connection = $this->em->getConnection();
+        $classes    = [];
 
         foreach ($this->em->getMetadataFactory()->getAllMetadata() as $metadata) {
             if ($metadata->isMappedSuperclass || (isset($metadata->isEmbeddedClass) && $metadata->isEmbeddedClass)) {
@@ -165,7 +158,7 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
             'getSchemaAssetsFilter'
         ) ? $connectionConfiguration->getSchemaAssetsFilter() : null;
 
-        $statements = [];
+        $this->cachedSqlStatements = [];
         foreach ($orderedTables as $tbl) {
             // If we have a filter expression, check it and skip if necessary
             if (! empty($filterExpr) && ! preg_match($filterExpr, $tbl)) {
@@ -183,18 +176,13 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
             }
 
             if ($this->purgeMode === self::PURGE_MODE_DELETE) {
-                $statements[] = $this->getDeleteFromTableSQL($tbl, $platform);
+                $this->cachedSqlStatements[] = $this->getDeleteFromTableSQL($tbl, $platform);
             } else {
-                $statements[] = $platform->getTruncateTableSQL($tbl, true);
+                $this->cachedSqlStatements[] = $platform->getTruncateTableSQL($tbl, true);
             }
         }
 
-        return $statements;
-    }
-
-    private function invalidateCache(): void
-    {
-        $this->cachedSqlStatements = null;
+        return $this->cachedSqlStatements;
     }
 
     /**
