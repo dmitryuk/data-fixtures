@@ -126,7 +126,7 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
         $commitOrder = $this->getCommitOrder($this->em, $classes);
 
         // Get platform parameters
-        $platform = $this->em->getConnection()->getDatabasePlatform();
+        $platform = $connection->getDatabasePlatform();
 
         // Drop association tables first
         $orderedTables = $this->getAssociationTables($commitOrder, $platform);
