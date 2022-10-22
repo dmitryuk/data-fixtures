@@ -159,9 +159,10 @@ class ORMPurger implements PurgerInterface, ORMPurgerInterface
         ) ? $connectionConfiguration->getSchemaAssetsFilter() : null;
 
         $this->cachedSqlStatements = [];
+        $hasFilterExpression       = ! empty($filterExpr);
         foreach ($orderedTables as $tbl) {
             // If we have a filter expression, check it and skip if necessary
-            if (! empty($filterExpr) && ! preg_match($filterExpr, $tbl)) {
+            if ($hasFilterExpression && ! preg_match($filterExpr, $tbl)) {
                 continue;
             }
 
